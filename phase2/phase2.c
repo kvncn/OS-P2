@@ -30,6 +30,11 @@ typedef struct ProcQueue ProcQueue;
  * 
  */
 struct Mailbox {
+    int numSlots; 
+    int usedSlots; 
+    int id; 
+    int status; 
+    int maxMessageSize;
     MailQueue mailQueue; 
     ProcQueue producers;
     ProcQueue consumers;
@@ -48,7 +53,8 @@ struct Message {
  */
 struct Process {
     int pid;       // pid for blocks/unblocks
-    Process* next; // for the queue
+    Process* senderNext; // for the queue
+    Process* receiverNext;
 };
 
 /**
