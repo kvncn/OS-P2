@@ -18,8 +18,56 @@
 #include <assert.h>
 
 // typedefs
+typedef struct Mailbox Mailbox; 
+typedef struct Message Message;
+typedef struct Process Process;
+typedef struct MailQueue MailQueue;
+typedef struct ProcQueue ProcQueue;
 
 // ----- Structs
+
+/**
+ * 
+ */
+struct Mailbox {
+    MailQueue mailQueue; 
+    ProcQueue producers;
+    ProcQueue consumers;
+};
+
+/**
+ * 
+ */
+struct Message {
+    char msg[MAX_MESSAGE];  // actual message
+    Message* next;          // for the queue
+};
+
+/**
+ * 
+ */
+struct Process {
+    int pid;       // pid for blocks/unblocks
+    Process* next; // for the queue
+};
+
+/**
+ * 
+ */
+struct MailQueue {
+    int size; 
+    Message* head;
+    Message* tail;
+};
+
+/**
+ * 
+ */
+struct ProcQueue {
+    int size; 
+    Process* head;
+    Process* tail;
+};
 
 // ----- Function Prototypes
 // Phase 2 Bootload
@@ -41,6 +89,8 @@ void wakeupByDevice(int type,int unit,int status);
 // is this supposed to be here ?? void (*systemCallVec[])(USLOSS_Sysargs *args);
 
 // ----- Global data structures/vars
+Mailbox mailboxes[MAXMBOX];
+Message mailslots[MAX_MESSAGE];
 
 /**
  * testing my branch
