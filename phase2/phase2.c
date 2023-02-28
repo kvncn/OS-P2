@@ -35,11 +35,6 @@ struct Mailbox {
     int id; 
     int status; 
     int maxMessageSize;
-    int numSlots; 
-    int usedSlots; 
-    int id; 
-    int status; 
-    int maxMessageSize;
     MailQueue mailQueue; 
     ProcQueue producers;
     ProcQueue consumers;
@@ -52,6 +47,7 @@ struct Mailbox {
 struct Message {
     int mboxID;
     int size;
+    int status;
     char msg[MAX_MESSAGE];  // actual message
     Message* next;          // for the queue
 };
@@ -60,10 +56,11 @@ struct Message {
  * 
  */
 struct Process {
-    int pid;       // pid for blocks/unblocks
+    int PID;       // pid for blocks/unblocks
+    int status;
     Process* senderNext; // for the queue
     Process* receiverNext;
-    Message* msgSlot;
+    Message* msgSlot
 };
 
 /**
@@ -105,11 +102,20 @@ void wakeupByDevice(int type,int unit,int status);
 void cleanMailbox(int);
 void cleanSlot(int);
 void cleanShadowEntry(int);
+int getNextMbox(void);
+int getNextProcess(void);
+int getNextSlot(void);
 
 // ----- Global data structures/vars
 Mailbox mailboxes[MAXMBOX];
 Message mailslots[MAX_MESSAGE];
 Process shadowTable[MAXPROC];
+
+int pidIncrementer;
+int slotIncrementer;
+int mailboxIncrementer;
+int numSlots;
+int numMailboxes;
 
 void (*systemCallVec[MAXSYSCALLS])(USLOSS_Sysargs *args); // syscalls
 
@@ -139,14 +145,16 @@ void phase2_init(void) {
     }
 
     pidIncrementer = 0;
+    slotIncrementer = 0;
+    mailboxIncrementer = 0;
+    numSlots = 0;
+    numMailboxes = 0;
 }
 
 /**
  * Since we do not use any service processes, this function is blank. 
  */
-void phase2_start_service_processes(void) {
-
-}
+void phase2_start_service_processes(void) {}
 
 /**
  * 
@@ -166,6 +174,12 @@ void phase2_clockHandler(void) {
  * 
  */
 int MboxCreate(int slots, int slot_size) {
+
+    if (numSlots < 0 || slot_size < 0 || slot_size > MAX_MESSAGE) {
+        return -1;
+    }
+
+    int mbslot = getNextMbox();
 
     return 0;
 }
@@ -229,6 +243,7 @@ void cleanMailbox(int slot) {
     mailboxes[slot].usedSlots = 0;
     mailboxes[slot].id = -1;
     mailboxes[slot].status = 0;
+    mailboxes[slot].maxMessageSize = 0;
 
     mailboxes[slot].mailQueue = NULL;
     mailboxes[slot].producers = NULL;
@@ -242,6 +257,7 @@ void cleanSlot(int slot) {
     mailslots[slot].msg[0] = '\0';
     mailslots[slot].next = NULL;
     mailslots[slot].size = 0;
+    mailslots[slot].status = 0;
     mailslots[slot].mboxID = -1;
 }
 
@@ -249,9 +265,60 @@ void cleanSlot(int slot) {
  * 
  */
 void cleanShadowEntry(int slot) {
-    shadowTable[slot].pid		= -1;
-	shadowTable[slot].state		= 0;
+    shadowTable[slot].PID = -1;
+	shadowTable[slot].status = 0;
 	shadowTable[slot].receiverNext = NULL;
 	shadowTable[slot].senderNext = NULL;
 	shadowTable[slot].msgSlot	= NULL;
+}
+
+/**
+ * 
+ */
+int getNextMbox() {
+	if (numMailboxes >= MAXMBOX) {
+		return -1;
+    }
+
+	int count = 0;
+	while(mailbox[mailboxIncrementer % MAXMBOX].status != 0) {
+		if (count < MAXMBOX) {
+            count++;
+		    mailboxIncrementer++;
+        } else {
+            return -1;
+        }
+	}
+
+	return mailboxIncrementer % MAXMBOX;
+}
+
+/**
+ * 
+ */
+int getNextProcess() {
+	int count = 0;
+	while (shadowTable[pidIncrementer % MAXPROC].status != 0) {
+		if (count < MAXPROC) {
+            count++;
+		    pidIncrementer++;
+        } else {
+            return -1;
+        }
+	}
+
+	return pidIncrementer % MAXPROC;
+}
+
+/**
+ * 
+ */
+int getNextSlot() {
+	for (int i = 0; i < MAXSLOTS; i++) {
+		if (slots[slotIncrementer % MAXSLOTS].status == 0) {
+            return slotIncrementer;
+        }
+		slotIncrementer++;
+	}
+	return -1;
 }
