@@ -352,7 +352,7 @@ int getNextSlot() {
 	return -1;
 }
 
-void unblockSencQueue(ProcQueue queue, int type) {
+void unblockQueue(ProcQueue queue, int type) {
     Process* curr = queue.head;
 
     while (curr != NULL) {
