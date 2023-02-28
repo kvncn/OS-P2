@@ -10,6 +10,10 @@
  * communication in an operating system. 
  */
 
+// ----- Constants 
+#define FREE 0
+#define IN_USE 1
+
 // ----- Includes
 #include <usloss.h>
 #include <phase2.h> 
@@ -17,7 +21,7 @@
 #include <string.h>
 #include <assert.h>
 
-// typedefs
+// ----- typedefs
 typedef struct Mailbox Mailbox; 
 typedef struct Message Message;
 typedef struct Process Process;
@@ -105,6 +109,7 @@ void cleanShadowEntry(int);
 int getNextMbox(void);
 int getNextProcess(void);
 int getNextSlot(void);
+void unblockQueue(ProcQueue, int);
 
 // ----- Global data structures/vars
 Mailbox mailboxes[MAXMBOX];
@@ -174,20 +179,44 @@ void phase2_clockHandler(void) {
  * 
  */
 int MboxCreate(int slots, int slot_size) {
-
+    // if the params are invalid
     if (numSlots < 0 || slot_size < 0 || slot_size > MAX_MESSAGE) {
         return -1;
     }
 
     int mbslot = getNextMbox();
 
-    return 0;
+    // no empty mailboxes
+    if (mbslot == -1) {
+        return -1;
+    }
+
+    mailboxes[mbslot].id = mbslot;
+    mailboxes[mbslot].status = IN_USE;
+    mailboxes[mbslot].numSlots = numSlots;
+    mailboxes[mbslot].maxMessageSize = slot_size;
+
+    return mbslot;
 }
 
 /**
  * 
  */
 int MboxRelease(int mbox_id) {
+    // check for invalid param
+    if (mbox_id < 0 || mbox_id >= MAXMBOX || mailboxes[mbox_id].status == FREE) {
+        return -1;
+    }
+
+    // change mailbox to be free
+    mailboxes[mbox_id].status = FREE;
+
+    // unblock the consumers
+    unblockQueue(mailboxes[mbox_id].consumers, 0); 
+
+    // unblock the producers
+    unblockQueue(mailboxes[mbox_id].producers, 1); 
+
     return 0;
 }
 
@@ -242,7 +271,7 @@ void cleanMailbox(int slot) {
     mailboxes[slot].numSlots = 0;
     mailboxes[slot].usedSlots = 0;
     mailboxes[slot].id = -1;
-    mailboxes[slot].status = 0;
+    mailboxes[slot].status = FREE;
     mailboxes[slot].maxMessageSize = 0;
 
     mailboxes[slot].mailQueue = NULL;
@@ -257,7 +286,7 @@ void cleanSlot(int slot) {
     mailslots[slot].msg[0] = '\0';
     mailslots[slot].next = NULL;
     mailslots[slot].size = 0;
-    mailslots[slot].status = 0;
+    mailslots[slot].status = FREE;
     mailslots[slot].mboxID = -1;
 }
 
@@ -266,7 +295,7 @@ void cleanSlot(int slot) {
  */
 void cleanShadowEntry(int slot) {
     shadowTable[slot].PID = -1;
-	shadowTable[slot].status = 0;
+	shadowTable[slot].status = FREE;
 	shadowTable[slot].receiverNext = NULL;
 	shadowTable[slot].senderNext = NULL;
 	shadowTable[slot].msgSlot	= NULL;
@@ -281,7 +310,7 @@ int getNextMbox() {
     }
 
 	int count = 0;
-	while(mailbox[mailboxIncrementer % MAXMBOX].status != 0) {
+	while(mailbox[mailboxIncrementer % MAXMBOX].status != FREE) {
 		if (count < MAXMBOX) {
             count++;
 		    mailboxIncrementer++;
@@ -298,7 +327,7 @@ int getNextMbox() {
  */
 int getNextProcess() {
 	int count = 0;
-	while (shadowTable[pidIncrementer % MAXPROC].status != 0) {
+	while (shadowTable[pidIncrementer % MAXPROC].status != FREE) {
 		if (count < MAXPROC) {
             count++;
 		    pidIncrementer++;
@@ -315,10 +344,24 @@ int getNextProcess() {
  */
 int getNextSlot() {
 	for (int i = 0; i < MAXSLOTS; i++) {
-		if (slots[slotIncrementer % MAXSLOTS].status == 0) {
+		if (slots[slotIncrementer % MAXSLOTS].status == FREE) {
             return slotIncrementer;
         }
 		slotIncrementer++;
 	}
 	return -1;
+}
+
+void unblockSencQueue(ProcQueue queue, int type) {
+    Process* curr = queue.head;
+
+    while (curr != NULL) {
+        curr->status = FREE;
+        unblockProc(curr->PID);
+        if (type == 1) {
+            curr = curr->senderNext;
+        } else {
+            curr = curr->receiverNext;
+        }
+    }
 }
