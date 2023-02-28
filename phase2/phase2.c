@@ -30,15 +30,23 @@ typedef struct ProcQueue ProcQueue;
  * 
  */
 struct Mailbox {
+    int numSlots; 
+    int usedSlots; 
+    int id; 
+    int status; 
+    int maxMessageSize;
     MailQueue mailQueue; 
     ProcQueue producers;
     ProcQueue consumers;
+
 };
 
 /**
  * 
  */
 struct Message {
+    int mboxID;
+    int size;
     char msg[MAX_MESSAGE];  // actual message
     Message* next;          // for the queue
 };
@@ -48,7 +56,9 @@ struct Message {
  */
 struct Process {
     int pid;       // pid for blocks/unblocks
-    Process* next; // for the queue
+    Process* senderNext; // for the queue
+    Process* receiverNext;
+    Message* msgSlot;
 };
 
 /**
@@ -86,21 +96,48 @@ int MboxCondRecv(int mbox_id, void *msg_ptr,int msg_max_size);
 void waitDevice(int type,int unit,int *status);
 void wakeupByDevice(int type,int unit,int status);
 
-// is this supposed to be here ?? void (*systemCallVec[])(USLOSS_Sysargs *args);
+// Helpers
+void cleanMailbox(int);
+void cleanSlot(int);
+void cleanShadowEntry(int);
 
 // ----- Global data structures/vars
 Mailbox mailboxes[MAXMBOX];
 Message mailslots[MAX_MESSAGE];
+Process shadowTable[MAXPROC];
+
+void (*systemCallVec[MAXSYSCALLS])(USLOSS_Sysargs *args); // syscalls
 
 /**
  * testing my branch
  */
 void phase2_init(void) {
 
+    USLOSS_IntVec[USLOSS_TERM_INT] = terminalHandler;
+    USLOSS_IntVec[USLOSS_SYSCALL_INt] = syscallHandler;
+    USLOSS_IntVec[USLOSS_CLOCK_int] = phase2_clockHandler;
+
+    for (int i = 0; i < MAXMBOX; i++) {
+        cleanMailbox(i);
+    }
+
+    for (int i = 0; i < MAXSLOTS; i++) {
+        cleanSlot(i);
+    }
+
+    for (int i = 0; i < MAXPROC; i++) {
+        cleanShadowEntry(i);
+    }
+
+    for (int i = 0; i < MAXSYSCALLS; i++) {
+        systemCallVector[i] = nullsys;
+    }
+
+    pidIncrementer = 0;
 }
 
 /**
- * 
+ * Since we do not use any service processes, this function is blank. 
  */
 void phase2_start_service_processes(void) {
 
@@ -124,6 +161,7 @@ void phase2_clockHandler(void) {
  * 
  */
 int MboxCreate(int slots, int slot_size) {
+
     return 0;
 }
 
@@ -174,4 +212,41 @@ void waitDevice(int type, int unit, int *status) {
  */
 void wakeupByDevice(int type, int unit, int status) {
 
+}
+
+// ----- Helpers
+
+/**
+ * 
+ */
+void cleanMailbox(int slot) {
+    mailboxes[slot].numSlots = 0;
+    mailboxes[slot].usedSlots = 0;
+    mailboxes[slot].id = -1;
+    mailboxes[slot].status = 0;
+
+    mailboxes[slot].mailQueue = NULL;
+    mailboxes[slot].producers = NULL;
+    mailboxes[slot].consumers = NULL;
+}
+
+/**
+ * 
+ */
+void cleanSlot(int slot) {
+    mailslots[slot].msg[0] = '\0';
+    mailslots[slot].next = NULL;
+    mailslots[slot].size = 0;
+    mailslots[slot].mboxID = -1;
+}
+
+/**
+ * 
+ */
+void cleanShadowEntry(int slot) {
+    shadowTable[slot].pid		= -1;
+	shadowTable[slot].state		= 0;
+	shadowTable[slot].receiverNext = NULL;
+	shadowTable[slot].senderNext = NULL;
+	shadowTable[slot].msgSlot	= NULL;
 }
