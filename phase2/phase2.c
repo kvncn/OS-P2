@@ -25,8 +25,6 @@
 typedef struct Mailbox Mailbox; 
 typedef struct Message Message;
 typedef struct Process Process;
-typedef struct MailQueue MailQueue;
-typedef struct ProcQueue ProcQueue;
 
 // ----- Structs
 
@@ -39,9 +37,9 @@ struct Mailbox {
     int id; 
     int status; 
     int maxMessageSize;
-    MailQueue mailQueue; 
-    ProcQueue producers;
-    ProcQueue consumers;
+    Message* messagesHead; 
+    Process* producersHead;
+    Process* consumersHead;
 
 };
 
@@ -65,24 +63,6 @@ struct Process {
     Process* senderNext; // for the queue
     Process* receiverNext;
     Message* msgSlot
-};
-
-/**
- * 
- */
-struct MailQueue {
-    int size; 
-    Message* head;
-    Message* tail;
-};
-
-/**
- * 
- */
-struct ProcQueue {
-    int size; 
-    Process* head;
-    Process* tail;
 };
 
 // ----- Function Prototypes
@@ -109,7 +89,12 @@ void cleanShadowEntry(int);
 int getNextMbox(void);
 int getNextProcess(void);
 int getNextSlot(void);
-void unblockQueue(ProcQueue, int);
+void unblockReceivers(Mailbox*);
+void unblockSenders(Mailbox*);
+void addToReceiverQueue(Mailbox*, Process*);
+void addToSenderQueue(Mailbox*, Process*);
+void addSlot(Mailbox*, Message*);
+void removeSlot(Mailbox*, Message*);
 
 // ----- Global data structures/vars
 Mailbox mailboxes[MAXMBOX];
@@ -165,6 +150,9 @@ void phase2_start_service_processes(void) {}
  * 
  */
 int phase2_check_io(void) {
+    for (int i =0; i < 7; i++) {
+
+    }
     return 0;
 }
 
@@ -212,10 +200,10 @@ int MboxRelease(int mbox_id) {
     mailboxes[mbox_id].status = FREE;
 
     // unblock the consumers
-    unblockQueue(mailboxes[mbox_id].consumers, 0); 
+    unblockReceivers(&mailboxes[mbox_id]); 
 
     // unblock the producers
-    unblockQueue(mailboxes[mbox_id].producers, 1); 
+    unblockSenders(&mailboxes[mbox_id]); 
 
     return 0;
 }
@@ -274,9 +262,9 @@ void cleanMailbox(int slot) {
     mailboxes[slot].status = FREE;
     mailboxes[slot].maxMessageSize = 0;
 
-    mailboxes[slot].mailQueue = NULL;
-    mailboxes[slot].producers = NULL;
-    mailboxes[slot].consumers = NULL;
+    mailboxes[slot].messagesHead = NULL;
+    mailboxes[slot].producersHead = NULL;
+    mailboxes[slot].consumersHead = NULL;
 }
 
 /**
@@ -352,16 +340,86 @@ int getNextSlot() {
 	return -1;
 }
 
-void unblockQueue(ProcQueue queue, int type) {
-    Process* curr = queue.head;
+/**
+ * 
+ */
+void unblockReceivers(Mailbox* mbox) {
+    Process* curr = mbox->consumersHead;
 
     while (curr != NULL) {
         curr->status = FREE;
         unblockProc(curr->PID);
-        if (type == 1) {
-            curr = curr->senderNext;
-        } else {
-            curr = curr->receiverNext;
-        }
+        curr = curr->receiverNext;
     }
+}
+
+/**
+ * 
+ */
+void unblockSenders(Mailbox* mbox) {
+    Process* curr = mbox->producersHead;
+
+    while (curr != NULL) {
+        curr->status = FREE;
+        unblockProc(curr->PID);
+        curr = curr->senderNext;
+    }
+}
+
+/**
+ * 
+ */
+void addToReceiverQueue(Mailbox* mbox, Process* proc) {
+    Process* h = mbox->consumersHead;
+
+    if (h == NULL) {
+        mbox->consumersHead = proc;
+    } else {
+        proc->receiverNext = mbox->consumersHead;
+        mbox->consumersHead = proc;
+    }
+}
+
+/**
+ * 
+ */
+void addToSenderQueue(Mailbox* mbox, Process* proc) {
+    Process* h = mbox->producersHead;
+
+    if (h == NULL) {
+        mbox->producers.head = proc;
+    } else {
+        proc->senderNext = mbox->producersHead;
+        mbox->producersHead = proc;
+    }
+}
+
+/**
+ * 
+ */
+void addSlot(Mailbox* mbox, Message* toAdd) {
+    Message* h = mbox->messagesHead;
+
+    if (h == NULL) {
+        mbox->messagesHead = toAdd;
+    } else {
+        toAdd->next = mbox->messagesHead;
+        mbox->messagesHead = toAdd;
+    }
+}
+
+/**
+ * 
+ */
+void removeSlot(Mailbox* mbox, Message* toRemove) {
+    if (mbox->messagesHead == toRemove) {
+        mbox->messagesHead = mbox->messagesHead->next;
+    }
+
+    Message* curr = mbox->messagesHead; 
+
+    while(curr->next != toRemove) {
+        curr = curr->next;
+    }
+    curr->next = curr->next->next;
 }
