@@ -35,6 +35,11 @@ struct Mailbox {
     int id; 
     int status; 
     int maxMessageSize;
+    int numSlots; 
+    int usedSlots; 
+    int id; 
+    int status; 
+    int maxMessageSize;
     MailQueue mailQueue; 
     ProcQueue producers;
     ProcQueue consumers;
