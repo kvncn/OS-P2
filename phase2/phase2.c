@@ -16,6 +16,7 @@
 
 // ----- Includes
 #include <usloss.h>
+#include <phase1.h>
 #include <phase2.h> 
 #include <stdlib.h>
 #include <string.h>
@@ -70,7 +71,6 @@ struct Process {
 void phase2_init(void);
 void phase2_start_service_processes(void);
 int phase2_check_io(void);
-void phase2_clockHandler(void);
 
 // Messaging System 
 int MboxCreate(int slots,int slot_size);
@@ -81,6 +81,12 @@ int MboxCondSend(int mbox_id, void *msg_ptr,int msg_size);
 int MboxCondRecv(int mbox_id, void *msg_ptr,int msg_max_size);
 void waitDevice(int type,int unit,int *status);
 void wakeupByDevice(int type,int unit,int status);
+
+// Interrupt Handlers
+void phase2_clockHandler(void);
+void terminalHandler(void);
+void syscallHandler(void);
+void nullsys(USLOSS_Sysargs*);
 
 // Helpers
 void cleanMailbox(int);
@@ -109,14 +115,16 @@ int numMailboxes;
 
 void (*systemCallVec[MAXSYSCALLS])(USLOSS_Sysargs *args); // syscalls
 
+// ----- Phase 2 Bootload
+
 /**
  * testing my branch
  */
 void phase2_init(void) {
 
     USLOSS_IntVec[USLOSS_TERM_INT] = terminalHandler;
-    USLOSS_IntVec[USLOSS_SYSCALL_INt] = syscallHandler;
-    USLOSS_IntVec[USLOSS_CLOCK_int] = phase2_clockHandler;
+    USLOSS_IntVec[USLOSS_SYSCALL_INT] = syscallHandler;
+    USLOSS_IntVec[USLOSS_CLOCK_INT] = phase2_clockHandler;
 
     for (int i = 0; i < MAXMBOX; i++) {
         cleanMailbox(i);
@@ -131,7 +139,7 @@ void phase2_init(void) {
     }
 
     for (int i = 0; i < MAXSYSCALLS; i++) {
-        systemCallVector[i] = nullsys;
+        systemCallVec[i] = nullsys;
     }
 
     pidIncrementer = 0;
@@ -156,12 +164,7 @@ int phase2_check_io(void) {
     return 0;
 }
 
-/**
- * 
- */
-void phase2_clockHandler(void) {
-
-}
+// ----- Messaging System
 
 /**
  * 
@@ -250,6 +253,36 @@ void wakeupByDevice(int type, int unit, int status) {
 
 }
 
+// ----- Interrupr Handlers
+
+/**
+ * 
+ */
+void phase2_clockHandler(void) {
+
+}
+
+/**
+ * 
+ */
+void terminalHandler(void) {
+
+}
+
+/**
+ * 
+ */
+void syscallHandler(void) {
+
+}
+
+/**
+ * 
+ */
+void nullsys(USLOSS_Sysargs*) {
+
+}
+
 // ----- Helpers
 
 /**
@@ -298,7 +331,7 @@ int getNextMbox() {
     }
 
 	int count = 0;
-	while(mailbox[mailboxIncrementer % MAXMBOX].status != FREE) {
+	while(mailboxes[mailboxIncrementer % MAXMBOX].status != FREE) {
 		if (count < MAXMBOX) {
             count++;
 		    mailboxIncrementer++;
@@ -332,7 +365,7 @@ int getNextProcess() {
  */
 int getNextSlot() {
 	for (int i = 0; i < MAXSLOTS; i++) {
-		if (slots[slotIncrementer % MAXSLOTS].status == FREE) {
+		if (mailslots[slotIncrementer % MAXSLOTS].status == FREE) {
             return slotIncrementer;
         }
 		slotIncrementer++;
@@ -387,7 +420,7 @@ void addToSenderQueue(Mailbox* mbox, Process* proc) {
     Process* h = mbox->producersHead;
 
     if (h == NULL) {
-        mbox->producers.head = proc;
+        mbox->producersHead = proc;
     } else {
         proc->senderNext = mbox->producersHead;
         mbox->producersHead = proc;
