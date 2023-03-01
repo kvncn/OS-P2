@@ -141,12 +141,10 @@ void phase2_init(void) {
         cleanMailbox(i);
     }
 
-    USLOSS_Console("IMMA WIPE MESSAGES\n");
     for (int i = 0; i < MAXSLOTS; i++) {
         cleanSlot(i);
     }
 
-    USLOSS_Console("IMMA WIPE PROCESSES\n");
     for (int i = 0; i < MAXPROC; i++) {
         cleanShadowEntry(i);
     }
@@ -155,11 +153,17 @@ void phase2_init(void) {
         systemCallVec[i] = nullsys;
     }
 
+    // need to intialize first 7 mailboxes
+    for (int i = 0; i < 7; i++) {
+        mailboxes[i].id = i;
+        mailboxes[i].status = IN_USE;
+        mailboxes[i].maxMessageSize = sizeof(int);
+    }
+
     pidIncrementer = 0;
     slotIncrementer = 0;
-    mailboxIncrementer = 0;
     numSlots = 0;
-    numMailboxes = 0;
+    numMailboxes = 7;
 }
 
 /**
@@ -171,7 +175,11 @@ void phase2_start_service_processes(void) {}
  * 
  */
 int phase2_check_io(void) {
+    // first 7 mailboxes are for io
     for (int i =0; i < 7; i++) {
+        if (mailboxes[i].consumersHead != NULL) {
+            return 1;
+        }
     }
     return 0;
 }
