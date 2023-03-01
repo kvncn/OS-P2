@@ -93,8 +93,9 @@ void wakeupByDevice(int type,int unit,int status);
 
 // Interrupt Handlers
 void phase2_clockHandler(void);
-void terminalHandler(void);
-void syscallHandler(void);
+void clockHandler(int, void*);
+void terminalHandler(int, void*);
+void syscallHandler(int, void*);
 void nullsys(USLOSS_Sysargs*);
 
 // Helpers
@@ -122,6 +123,7 @@ int slotIncrementer;
 int mailboxIncrementer;
 int numSlots;
 int numMailboxes;
+int clockCount;
 
 void (*systemCallVec[MAXSYSCALLS])(USLOSS_Sysargs *args); // syscalls
 
@@ -134,7 +136,7 @@ void phase2_init(void) {
 
     USLOSS_IntVec[USLOSS_TERM_INT] = terminalHandler;
     USLOSS_IntVec[USLOSS_SYSCALL_INT] = syscallHandler;
-    USLOSS_IntVec[USLOSS_CLOCK_INT] = phase2_clockHandler;
+    USLOSS_IntVec[USLOSS_CLOCK_INT] = clockHandler;
 
     for (int i = 0; i < MAXMBOX; i++) {
         cleanMailbox(i);
@@ -535,7 +537,21 @@ int MboxCondRecv(int mbox_id, void *msg_ptr, int msg_max_size) {
  * 
  */
 void waitDevice(int type, int unit, int *status) {
+    if (type == USLOSS_CLOCK_DEV) {
+		MboxRecv(0, status, 4);
+    }
+	else if (type == USLOSS_TERM_DEV) {
+		MboxRecv(3 + unit, status, 4);
+    }
+	else if (type == USLOSS_DISK_DEV) {
+		MboxRecv(1 + unit, status, 4);
+    }
+	else {
+		USLOSS_Console("Invalid device. Halt\n");
+		USLOSS_Halt(1);
+	}
 
+	return 0;
 }
 
 /**
@@ -548,29 +564,53 @@ void wakeupByDevice(int type, int unit, int status) {}
 /**
  * 
  */
-void phase2_clockHandler(void) {
+void phase2_clockHandler(void) {}
 
+void clockHandler(int type, void* args) {
+    int status = -1;
+    int i;
+
+    timeSlice();
+    i = USLOSS_DeviceInput(USLOSS_CLOCK_DEV, 0, &status);
+    i++;
+    clockCount++;
+    if (clockCount % 5 == 0) {
+        MboxCondSend(0, &status, 4);
+    }
 }
 
 /**
  * 
  */
-void terminalHandler(void) {
+void terminalHandler(int type, void* args) {
+    int tmp = -1;
 
+    int x = USLOSS_DeviceInput(USLOSS_TERM_DEV, (u_int64_t) args, &tmp);
+	x++;
+	MboxCondSend((u_int64_t) args + 3, &tmp, 4);
 }
 
 /**
  * 
  */
-void syscallHandler(void) {
+void syscallHandler(int type, void* args) {
+    USLOSS_Sysargs* tmp = (USLOSS_Sysargs*) args;
 
+    if (tmp->number >= 0 && tmp->number < MAXSYSCALLS) {
+        systemCallVec[tmp->number](args);
+    }
+    else {
+        USLOSS_Console("syscallHandler(): Invalid syscall number %d\n", tmp->number);
+        USLOSS_Halt(1);
+    }
 }
 
 /**
  * 
  */
-void nullsys(USLOSS_Sysargs*) {
-
+void nullsys(USLOSS_Sysargs* args) {
+    USLOSS_Console("nullsys(): Program called an unimplemented syscall.  syscall no: %d   PSR: 0x09\n", args->number);
+	USLOSS_Halt(1);
 }
 
 // ----- Helpers
