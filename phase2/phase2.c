@@ -41,6 +41,7 @@ struct Mailbox {
     int maxMessageSize;
     int nextMsg;
     int sent;
+    int receiveSize;
 
     // for zero slot mailboxes
     int zMessageSize; 
@@ -99,6 +100,7 @@ void nullsys(USLOSS_Sysargs*);
 // Helpers
 void cleanMailbox(int);
 void cleanSlot(int);
+void cleanSlotPointer(Message*);
 void cleanShadowEntry(int);
 int getNextMbox(void);
 int getNextProcess(void);
@@ -369,7 +371,110 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size) {
  * 
  */
 int MboxRecv(int mbox_id, void *msg_ptr, int msg_max_size) {
-    return 0;
+    // invalid parameters
+    if (mbox_id < 0 || mbox_id > MAXMBOX || msg_size < 0 || msg_size > mailboxes[mbox_id].maxMessageSize) {
+        return -1;
+    }
+
+    int size = -1;
+
+    Mailbox* mbox = &mailboxes[mbox_id];
+
+    if (mbox->status == FREE) {
+        return -1;
+    }
+
+    // if we are dealing with a zero slot mailbox
+    if (mbox->numSlots == 0) {
+        if (mbox->producersHead == NULL) {
+            int procIdx = getNextProcess();
+
+            shadowTable[procIdx].PID = getpid();
+            shadowTable[procIdx].status = BLOCKED;
+
+            addToReceiverQueue(mbox, &shadowTable[procIdx]);
+
+            blockMe(10+shadowTable[procIdx].PID); // why the 10+ ???
+
+            // in case we release the mailbox before ensuring it is invalid
+            if (mbox->status == FREE) {
+                return -3;
+            }
+
+            memcpy(msg_ptr, mbox->zSlot, msg_max_size);
+
+            return mbox->zMessageSize;
+        } 
+
+        int oldBlock = mbox->producersHead->PID;
+        mbox->producersHead->status = FREE;
+
+        // just free this up
+        Process* nextSender = mbox->producersHead->senderNext;
+        mbox->producersHead = nextSender;
+
+        memcpy(msg_ptr, mbox->zSlot, msg_max_size);
+
+        // now we can unblock the process because it received the message
+        // it was waiting on
+        unblockProc(oldBlock);
+        return mbox->zMessageSize;
+    }
+
+    int isBlocked = 0;
+    int procIdx = -1;
+
+    // if there are no messages to receive, block until we do
+    if (mbox->messagesHead == NULL) {
+        isBlocked = 1;
+        procIdx = getNextProcess();
+
+        shadowTable[procIdx].PID = getpid();
+        shadowTable[procIdx].status = BLOCKED;
+        mbox->receiveSize = msg_max_size;
+
+        addToReceiverQueue(mbox, &shadowTable[procIdx]);
+
+        blockMe(10+shadowTable[procIdx].PID); // why the 10+ ???
+
+        // in case we release the mailbox before ensuring it is invalid
+        if (mbox->status == FREE) {
+            return -3;
+        }
+    }
+
+    // can't receive a message bigger than what we can accomodate
+    if (mbox->messagesHead->size > msg_max_size) {
+        return -1;
+    }
+
+    // if we were blocked, now that we have a message we can just receive it
+    if (isBlocked) {
+        memcpy(msg_ptr, mbox->messagesHead->msg, msg_max_size);
+        size = mbox->messagesHead->size;
+
+        Message* cleanUp = mbox->messagesHead;
+        mbox->messagesHead = mbox->messagesHead->next;
+
+        cleanSlotPointer(cleanUp);  
+    }
+
+    // if we have free slots, let's just clean up the blocked sender
+    if (mbox->messagesHead != NULL) {
+        int blockIdx = mbox->producersHead->PID;
+
+        mbox->producersHead->status = FREE;
+
+        Process* next = mbox->producersHead->senderNext;
+        mbox->producersHead = next;
+
+        unblockProc(blockIdx);
+    }
+
+    mbox->usedSlots--;
+    numSlots--;
+
+    return size;
 }
 
 /**
@@ -405,7 +510,25 @@ int MboxCondSend(int mbox_id, void *msg_ptr, int msg_size) {
  * 
  */
 int MboxCondRecv(int mbox_id, void *msg_ptr, int msg_max_size) {
-    return 0;
+    // invalid parameters
+    if (mbox_id < 0 || mbox_id > MAXMBOX || msg_max_size < 0 || msg_max_size > MAX_MESSAGE) {
+        return -1;
+    }
+
+    // now instead of blocking we just return the code
+    Mailbox curr = mailboxes[mbox_id];
+
+    if (curr.status == FREE) {
+        return -1;
+    }
+
+    // if there's something to receive
+    if (curr.messagesHead == NULL) {
+        return -2;
+    }
+
+    // if we already checked that we are not blocking we can go ahead and receive the message
+    return MboxRecv(mbox_id, msg_ptr, msg_max_size);
 }
 
 /**
@@ -463,6 +586,7 @@ void cleanMailbox(int slot) {
     mailboxes[slot].maxMessageSize = 0;
     mailboxes[slot].nextMsg = 1; // why not zero???
     mailboxes[slot].sent = 0;
+    mailboxes[slot].receiveSize = 0;
 
     mailboxes[slot].zMessageSize = 0;
     mailboxes[slot].zSlot[0] = '\0';
@@ -481,6 +605,16 @@ void cleanSlot(int slot) {
     mailslots[slot].size = 0;
     mailslots[slot].status = FREE;
     mailslots[slot].mboxID = -1;
+}
+
+/**
+ * 
+ */
+void cleanSlotPointer(Message* msg) {
+    msg->mboxID = -1;
+    msg->next = NULL;
+    msg->size = 0;
+    msg->status = FREE;
 }
 
 /**
