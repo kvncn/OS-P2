@@ -245,7 +245,7 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size) {
 
     // if we don't have any more available slots to write a message to
     if (numSlots >= MAXSLOTS) {
-        USLOSS_Console("MboxSend_helper: Could not send, the system is out of mailbox\n");
+        USLOSS_Console("MboxSend_helper: Could not send, the system is out of mailbox slots.\n");
         return -2;
     }
 
@@ -512,6 +512,7 @@ int MboxCondSend(int mbox_id, void *msg_ptr, int msg_size) {
 
     // error
     if (numSlots >= MAXSLOTS) {
+        USLOSS_Console("MboxSend_helper: Could not send, the system is out of mailbox slots.\n");
         return -2;
     }
 
