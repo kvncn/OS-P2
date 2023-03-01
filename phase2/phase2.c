@@ -256,7 +256,7 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size) {
 
             addToSenderQueue(mbox, &shadowTable[procIdx]);
 
-            memcpy(mbox->zeroSlot, msg_ptr, msg_size);
+            memcpy(mbox->zSlot, msg_ptr, msg_size);
             mbox->zMessageSize = msg_size;
 
             blockMe(10+shadowTable[procIdx].PID); // why the 10+ ???
@@ -302,10 +302,10 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size) {
         // This whole thing is sketch
         while (msgIdx > mbox->sent + 1) {
             procIdx = getNextProcess();
-            shadowTable[procSlot].pid 	= getpid();
-			shadowTable[procSlot].state	= BLOCKED;
+            shadowTable[procIdx].PID = getpid();
+			shadowTable[procIdx].status	= BLOCKED;
 
-			addToSendList(mb, &shadowTable[procSlot]); // why the order list???
+			addToSenderQueue(mbox, &shadowTable[procIdx]); // why the order list???
             
             blockMe(10+shadowTable[procIdx].PID); // why the 10+ ???
 
@@ -372,7 +372,7 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size) {
  */
 int MboxRecv(int mbox_id, void *msg_ptr, int msg_max_size) {
     // invalid parameters
-    if (mbox_id < 0 || mbox_id > MAXMBOX || msg_size < 0 || msg_size > mailboxes[mbox_id].maxMessageSize) {
+    if (mbox_id < 0 || mbox_id > MAXMBOX || msg_max_size < 0 || msg_max_size > mailboxes[mbox_id].maxMessageSize) {
         return -1;
     }
 
