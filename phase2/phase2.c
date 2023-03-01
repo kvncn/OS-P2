@@ -115,7 +115,7 @@ void removeSlot(Mailbox*, Message*);
 
 // ----- Global data structures/vars
 Mailbox mailboxes[MAXMBOX];
-Message mailslots[MAX_MESSAGE];
+Message mailslots[MAXSLOTS];
 Process shadowTable[MAXPROC];
 
 int pidIncrementer;
@@ -133,7 +133,6 @@ void (*systemCallVec[MAXSYSCALLS])(USLOSS_Sysargs *args); // syscalls
  * testing my branch
  */
 void phase2_init(void) {
-
     USLOSS_IntVec[USLOSS_TERM_INT] = terminalHandler;
     USLOSS_IntVec[USLOSS_SYSCALL_INT] = syscallHandler;
     USLOSS_IntVec[USLOSS_CLOCK_INT] = clockHandler;
@@ -142,10 +141,12 @@ void phase2_init(void) {
         cleanMailbox(i);
     }
 
+    USLOSS_Console("IMMA WIPE MESSAGES\n");
     for (int i = 0; i < MAXSLOTS; i++) {
         cleanSlot(i);
     }
 
+    USLOSS_Console("IMMA WIPE PROCESSES\n");
     for (int i = 0; i < MAXPROC; i++) {
         cleanShadowEntry(i);
     }
@@ -171,7 +172,6 @@ void phase2_start_service_processes(void) {}
  */
 int phase2_check_io(void) {
     for (int i =0; i < 7; i++) {
-
     }
     return 0;
 }
