@@ -194,7 +194,7 @@ int phase2_check_io(void) {
  */
 int MboxCreate(int slots, int slot_size) {
     // if the params are invalid
-    if (numSlots < 0 || slot_size < 0 || slot_size > MAX_MESSAGE) {
+    if (slots < 0 || slots > MAXSLOTS || slot_size < 0 || slot_size > MAX_MESSAGE) {
         return -1;
     }
 
