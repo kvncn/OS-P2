@@ -332,6 +332,7 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size) {
         }
     }
 
+
     // here we have space left and can just simply send the message
     int slotIdx = getNextSlot();
     Message* newMsg = &mailslots[slotIdx];
@@ -388,10 +389,9 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size) {
  */
 int MboxRecv(int mbox_id, void *msg_ptr, int msg_max_size) {
     // invalid parameters
-    if (mbox_id < 0 || mbox_id > MAXMBOX || msg_max_size < 0 || msg_max_size > mailboxes[mbox_id].maxMessageSize) {
+    if (mbox_id < 0 || mbox_id > MAXMBOX || msg_max_size < 0 || msg_max_size > MAX_MESSAGE) {
         return -1;
     }
-
     int size = -1;
 
     Mailbox* mbox = &mailboxes[mbox_id];
@@ -465,11 +465,12 @@ int MboxRecv(int mbox_id, void *msg_ptr, int msg_max_size) {
         return -1;
     }
 
+
     // if we were blocked, now that we have a message we can just receive it
     if (isBlocked) {
         memcpy(msg_ptr, shadowTable[procIdx].msgSlot->msg, msg_max_size);
         size = shadowTable[procIdx].msgSlot->size;
-
+        
         Message* removed = shadowTable[procIdx].msgSlot;
         mbox->messagesHead = mbox->messagesHead->next;
 
@@ -871,20 +872,33 @@ void addToOrderedQueue(Mailbox* mbox, Process* proc) {
 void addSlot(Mailbox* mbox, Message* toAdd) {
     Message* h = mbox->messagesHead;
 
+
     if (h == NULL) {
         mbox->messagesHead = toAdd;
-    } else {
-        toAdd->next = mbox->messagesHead;
-        mbox->messagesHead = toAdd;
+        return;
+    } 
+
+    //USLOSS_Console("LETS GOO\n");
+
+    Message* curr = mbox->messagesHead;
+
+    while (curr->next != NULL) {
+        curr = curr->next;
     }
+    curr->next = toAdd;
+    
 }
 
 /**
  * 
  */
 void removeSlot(Mailbox* mbox, Message* toRemove) {
+    if (mbox->messagesHead == NULL) {
+        return;
+    }
     if (mbox->messagesHead == toRemove) {
         mbox->messagesHead = mbox->messagesHead->next;
+        return;
     }
 
     Message* curr = mbox->messagesHead; 
