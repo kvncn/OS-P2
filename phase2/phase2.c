@@ -50,6 +50,7 @@ struct Mailbox {
     Message* messagesHead; 
     Process* producersHead;
     Process* consumersHead;
+    Process* orderedHead;
 
 };
 
@@ -72,6 +73,7 @@ struct Process {
     int status;
     Process* senderNext; // for the queue
     Process* receiverNext;
+    Process* orderedNext; 
     Message* msgSlot
 };
 
@@ -110,6 +112,7 @@ void unblockReceivers(Mailbox*);
 void unblockSenders(Mailbox*);
 void addToReceiverQueue(Mailbox*, Process*);
 void addToSenderQueue(Mailbox*, Process*);
+void addToOrderedQueue(Mailbox*, Process*);
 void addSlot(Mailbox*, Message*);
 void removeSlot(Mailbox*, Message*);
 
@@ -204,7 +207,7 @@ int MboxCreate(int slots, int slot_size) {
 
     mailboxes[mbslot].id = mbslot;
     mailboxes[mbslot].status = IN_USE;
-    mailboxes[mbslot].numSlots = numSlots;
+    mailboxes[mbslot].numSlots = slots;
     mailboxes[mbslot].maxMessageSize = slot_size;
 
     return mbslot;
@@ -282,6 +285,8 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size) {
 
             // just free this up
             Process* nextConsumer = mbox->consumersHead->receiverNext;
+            mbox->consumersHead->receiverNext = NULL;
+            mbox->consumersHead = nextConsumer; 
 
             memcpy(mbox->zSlot, msg_ptr, msg_size);
             mbox->zMessageSize = msg_size;
@@ -315,7 +320,7 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size) {
             shadowTable[procIdx].PID = getpid();
 			shadowTable[procIdx].status	= BLOCKED;
 
-			addToSenderQueue(mbox, &shadowTable[procIdx]); // why the order list???
+			addToOrderedQueue(mbox, &shadowTable[procIdx]); // why the order list???
             
             blockMe(10+shadowTable[procIdx].PID); // why the 10+ ???
 
@@ -351,7 +356,8 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size) {
         // remove the process from the buffer and unblock it
         int removed = mbox->consumersHead->PID;
 
-        Process* newHead = mbox->consumersHead->senderNext;
+        Process* newHead = mbox->consumersHead->receiverNext;
+        mbox->consumersHead->receiverNext = NULL;
         mbox->consumersHead = newHead; 
         // why did Vatsav make it null? like wouldn;t that just ignore the
         // rest of the remaining ones? I think it's because his queue only 
@@ -361,12 +367,12 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size) {
 
     // should this be receivers? or consumers? idk Im confused if we even need
     // this at all, this all comes from confusion on Vatsav's order list
-    while (mbox->producersHead != NULL) {
-        int removed = mbox->producersHead->PID;
+    while (mbox->orderedHead != NULL) {
+        int removed = mbox->orderedHead->PID;
 
-        Process* newHead = mbox->producersHead->senderNext; 
-
-        mbox->consumersHead = newHead; 
+        Process* newHead = mbox->orderedHead->orderedNext; 
+        mbox->orderedHead->orderedNext = NULL;
+        mbox->orderedHead = newHead; 
 
         unblockProc(removed);
     }
@@ -421,6 +427,7 @@ int MboxRecv(int mbox_id, void *msg_ptr, int msg_max_size) {
 
         // just free this up
         Process* nextSender = mbox->producersHead->senderNext;
+        mbox->producersHead->senderNext = NULL;
         mbox->producersHead = nextSender;
 
         memcpy(msg_ptr, mbox->zSlot, msg_max_size);
@@ -460,6 +467,18 @@ int MboxRecv(int mbox_id, void *msg_ptr, int msg_max_size) {
 
     // if we were blocked, now that we have a message we can just receive it
     if (isBlocked) {
+        memcpy(msg_ptr, shadowTable[procIdx].msgSlot->msg, msg_max_size);
+        size = shadowTable[procIdx].msgSlot->size;
+
+        Message* removed = shadowTable[procIdx].msgSlot;
+        mbox->messagesHead = mbox->messagesHead->next;
+
+        removeSlot(mbox, removed);
+
+        shadowTable[procIdx].status = FREE;
+
+        cleanSlotPointer(removed);  
+    } else {
         memcpy(msg_ptr, mbox->messagesHead->msg, msg_max_size);
         size = mbox->messagesHead->size;
 
@@ -476,6 +495,7 @@ int MboxRecv(int mbox_id, void *msg_ptr, int msg_max_size) {
         mbox->producersHead->status = FREE;
 
         Process* next = mbox->producersHead->senderNext;
+        mbox->producersHead->senderNext = NULL;
         mbox->producersHead = next;
 
         unblockProc(blockIdx);
@@ -642,6 +662,7 @@ void cleanMailbox(int slot) {
     mailboxes[slot].messagesHead = NULL;
     mailboxes[slot].producersHead = NULL;
     mailboxes[slot].consumersHead = NULL;
+    mailboxes[slot].orderedHead = NULL;
 }
 
 /**
@@ -673,7 +694,8 @@ void cleanShadowEntry(int slot) {
 	shadowTable[slot].status = FREE;
 	shadowTable[slot].receiverNext = NULL;
 	shadowTable[slot].senderNext = NULL;
-	shadowTable[slot].msgSlot	= NULL;
+	shadowTable[slot].msgSlot = NULL;
+    shadowTable[slot].orderedNext = NULL;
 }
 
 /**
@@ -756,29 +778,91 @@ void unblockSenders(Mailbox* mbox) {
 /**
  * 
  */
+// void addToReceiverQueue(Mailbox* mbox, Process* proc) {
+//     Process* h = mbox->consumersHead;
+
+//     if (h == NULL) {
+//         mbox->consumersHead = proc;
+//     } else {
+//         proc->receiverNext = mbox->consumersHead;
+//         mbox->consumersHead = proc;
+//     }
+// }
+
 void addToReceiverQueue(Mailbox* mbox, Process* proc) {
-    Process* h = mbox->consumersHead;
+     Process* h = mbox->consumersHead;
 
     if (h == NULL) {
         mbox->consumersHead = proc;
-    } else {
-        proc->receiverNext = mbox->consumersHead;
-        mbox->consumersHead = proc;
+        return;
     }
+
+    Process* curr = mbox->consumersHead;
+
+    while (curr->receiverNext != NULL) {
+        curr = curr->receiverNext;
+    }
+    curr->receiverNext = proc;
 }
 
 /**
  * 
  */
+// void addToSenderQueue(Mailbox* mbox, Process* proc) {
+//     Process* h = mbox->producersHead;
+
+//     if (h == NULL) {
+//         mbox->producersHead = proc;
+//     } else {
+//         proc->senderNext = mbox->producersHead;
+//         mbox->producersHead = proc;
+//     }
+// }
+
 void addToSenderQueue(Mailbox* mbox, Process* proc) {
-    Process* h = mbox->producersHead;
+     Process* h = mbox->producersHead;
 
     if (h == NULL) {
         mbox->producersHead = proc;
-    } else {
-        proc->senderNext = mbox->producersHead;
-        mbox->producersHead = proc;
+        return;
     }
+
+    Process* curr = mbox->producersHead;
+
+    while (curr->senderNext != NULL) {
+        curr = curr->senderNext;
+    }
+    curr->senderNext = proc;
+}
+
+/**
+ * 
+ */
+// void addToOrderedQueue(Mailbox* mbox, Process* proc) {
+//     Process* h = mbox->orderedHead;
+
+//     if (h == NULL) {
+//         mbox->orderedHead = proc;
+//     } else {
+//         proc->orderedNext = mbox->orderedHead;
+//         mbox->orderedHead = proc;
+//     }
+// }
+
+void addToOrderedQueue(Mailbox* mbox, Process* proc) {
+     Process* h = mbox->orderedHead;
+
+    if (h == NULL) {
+        mbox->orderedHead = proc;
+        return;
+    }
+
+    Process* curr = mbox->orderedHead;
+
+    while (curr->orderedNext != NULL) {
+        curr = curr->orderedNext;
+    }
+    curr->orderedNext = proc;
 }
 
 /**
