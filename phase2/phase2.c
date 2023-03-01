@@ -272,7 +272,7 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size) {
             memcpy(mbox->zSlot, msg_ptr, msg_size);
             mbox->zMessageSize = msg_size;
 
-            blockMe(10+shadowTable[procIdx].PID); // why the 10+ ???
+            blockMe(10+shadowTable[procIdx].PID);
 
             // in case we release the mailbox before ensuring it is invalid
             if (mbox->status == FREE) {
@@ -307,22 +307,21 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size) {
 
         addToSenderQueue(mbox, &shadowTable[procIdx]);
 
-        blockMe(10+shadowTable[procIdx].PID); // why the 10+ ???
+        blockMe(10+shadowTable[procIdx].PID); 
 
         // in case we release the mailbox before ensuring it is invalid
         if (mbox->status == FREE) {
             return -3;
         }
 
-        // This whole thing is sketch
         while (msgIdx > mbox->sent + 1) {
             procIdx = getNextProcess();
             shadowTable[procIdx].PID = getpid();
 			shadowTable[procIdx].status	= BLOCKED;
 
-			addToOrderedQueue(mbox, &shadowTable[procIdx]); // why the order list???
+			addToOrderedQueue(mbox, &shadowTable[procIdx]); 
             
-            blockMe(10+shadowTable[procIdx].PID); // why the 10+ ???
+            blockMe(10+shadowTable[procIdx].PID); 
 
              // in case we release the mailbox before ensuring it is invalid
             if (mbox->status == FREE) {
@@ -360,14 +359,10 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size) {
         Process* newHead = mbox->consumersHead->receiverNext;
         mbox->consumersHead->receiverNext = NULL;
         mbox->consumersHead = newHead; 
-        // why did Vatsav make it null? like wouldn;t that just ignore the
-        // rest of the remaining ones? I think it's because his queue only 
-        // has one proc, so we need to actually take care of this here
+
         unblockProc(removed);
     }
 
-    // should this be receivers? or consumers? idk Im confused if we even need
-    // this at all, this all comes from confusion on Vatsav's order list
     while (mbox->orderedHead != NULL) {
         int removed = mbox->orderedHead->PID;
 
@@ -410,7 +405,7 @@ int MboxRecv(int mbox_id, void *msg_ptr, int msg_max_size) {
 
             addToReceiverQueue(mbox, &shadowTable[procIdx]);
 
-            blockMe(10+shadowTable[procIdx].PID); // why the 10+ ???
+            blockMe(10+shadowTable[procIdx].PID);
 
             // in case we release the mailbox before ensuring it is invalid
             if (mbox->status == FREE) {
@@ -452,7 +447,7 @@ int MboxRecv(int mbox_id, void *msg_ptr, int msg_max_size) {
 
         addToReceiverQueue(mbox, &shadowTable[procIdx]);
 
-        blockMe(10+shadowTable[procIdx].PID); // why the 10+ ???
+        blockMe(10+shadowTable[procIdx].PID);
 
         // in case we release the mailbox before ensuring it is invalid
         if (mbox->status == FREE) {
@@ -821,7 +816,7 @@ void addToReceiverQueue(Mailbox* mbox, Process* proc) {
 // }
 
 void addToSenderQueue(Mailbox* mbox, Process* proc) {
-     Process* h = mbox->producersHead;
+    Process* h = mbox->producersHead;
 
     if (h == NULL) {
         mbox->producersHead = proc;
