@@ -13,6 +13,7 @@
 // ----- Constants 
 #define FREE 0
 #define IN_USE 1
+#define BLOCKED -1
 
 // ----- Includes
 #include <usloss.h>
@@ -38,6 +39,13 @@ struct Mailbox {
     int id; 
     int status; 
     int maxMessageSize;
+    int nextMsg;
+    int sent;
+
+    // for zero slot mailboxes
+    int zMessageSize; 
+    char* zSlot[MAX_MESSAGE]; // message in a zero slot mailbox
+
     Message* messagesHead; 
     Process* producersHead;
     Process* consumersHead;
@@ -215,6 +223,145 @@ int MboxRelease(int mbox_id) {
  * 
  */
 int MboxSend(int mbox_id, void *msg_ptr, int msg_size) {
+    // checking for invalid params
+    if (mbox_id < 0 || mbox_id >= MAXMBOX || msg_size < 0 || msg_size > mailboxes[mbox_id].maxMessageSize) {
+        return -1;
+    }
+
+    // if we don't have any more available slots to write a message to
+    if (numSlots >= MAXSLOTS) {
+        return -2;
+    }
+
+    Mailbox* mbox = &mailboxes[mbox_id];
+
+    // mailbox is invalid
+    if (mbox->status == FREE) { 
+        return -1;
+    }
+
+    int msgIdx = mbox->nextMsg;
+    mbox->nextMsg++;
+
+    // if we have a zero slot mailbox
+    if (mbox->numSlots == 0) {
+        // if we have no one waiting for a message
+        if (mbox->consumersHead == NULL) {
+            int procIdx = getNextProcess();
+
+            shadowTable[procIdx].PID = getpid();
+            shadowTable[procIdx].status = BLOCKED;
+
+            addToSenderQueue(mbox, &shadowTable[procIdx]);
+
+            memcpy(mbox->zeroSlot, msg_ptr, msg_size);
+            mbox->zMessageSize = msg_size;
+
+            blockMe(10+shadowTable[procIdx].PID); // why the 10+ ???
+
+            // in case we release the mailbox before ensuring it is invalid
+            if (mbox->status == FREE) {
+                return -3;
+            }
+        // if we do have someone on the consumer buffer to get this message
+        } else {
+            int oldBlock = mbox->consumersHead->PID;
+            mbox->consumersHead->status = FREE;
+
+            // just free this up
+            Process* nextConsumer = mbox->consumersHead->receiverNext;
+
+            memcpy(mbox->zSlot, msg_ptr, msg_size);
+            mbox->zMessageSize = msg_size;
+
+            // now we can unblock the process because it received the message
+            // it was waiting on
+            unblockProc(oldBlock);
+        }
+        return 0;
+    }
+
+    // if the mailbox is full, block until a free slot opens up
+    if (mbox->usedSlots == mbox->numSlots) {
+        int procIdx = getNextProcess();
+
+        shadowTable[procIdx].PID = getpid();
+        shadowTable[procIdx].status = BLOCKED;
+
+        addToSenderQueue(mbox, &shadowTable[procIdx]);
+
+        blockMe(10+shadowTable[procIdx].PID); // why the 10+ ???
+
+        // in case we release the mailbox before ensuring it is invalid
+        if (mbox->status == FREE) {
+            return -3;
+        }
+
+        // This whole thing is sketch
+        while (msgIdx > mbox->sent + 1) {
+            procIdx = getNextProcess();
+            shadowTable[procSlot].pid 	= getpid();
+			shadowTable[procSlot].state	= BLOCKED;
+
+			addToSendList(mb, &shadowTable[procSlot]); // why the order list???
+            
+            blockMe(10+shadowTable[procIdx].PID); // why the 10+ ???
+
+             // in case we release the mailbox before ensuring it is invalid
+            if (mbox->status == FREE) {
+                return -3;
+            }
+
+        }
+    }
+
+    // here we have space left and can just simply send the message
+    int slotIdx = getNextSlot();
+    Message* newMsg = &mailslots[slotIdx];
+
+    // initialize the message
+    newMsg->mboxID = mbox_id;
+    newMsg->status = IN_USE;
+    newMsg->next = NULL;
+    newMsg->size = msg_size;
+    memcpy(&newMsg->msg, msg_ptr, msg_size);
+
+    // add the message to the mailbox
+    mbox->sent++;
+    addSlot(mbox, newMsg);
+
+    // now we check if we simply send the message (if there are waiting
+    // processes) or not
+    if (mbox->consumersHead != NULL) {
+        // the process receives the message, ie. it was sent
+        mbox->consumersHead->msgSlot = newMsg;
+
+        // remove the process from the buffer and unblock it
+        int removed = mbox->consumersHead->PID;
+
+        Process* newHead = mbox->consumersHead->senderNext;
+        mbox->consumersHead = newHead; 
+        // why did Vatsav make it null? like wouldn;t that just ignore the
+        // rest of the remaining ones? I think it's because his queue only 
+        // has one proc, so we need to actually take care of this here
+        unblockProc(removed);
+    }
+
+    // should this be receivers? or consumers? idk Im confused if we even need
+    // this at all, this all comes from confusion on Vatsav's order list
+    while (mbox->producersHead != NULL) {
+        int removed = mbox->producersHead->PID;
+
+        Process* newHead = mbox->producersHead->senderNext; 
+
+        mbox->consumersHead = newHead; 
+
+        unblockProc(removed);
+    }
+
+    mbox->usedSlots++;
+    numSlots++;
+
     return 0;
 }
 
@@ -229,7 +376,29 @@ int MboxRecv(int mbox_id, void *msg_ptr, int msg_max_size) {
  * 
  */
 int MboxCondSend(int mbox_id, void *msg_ptr, int msg_size) {
-    return 0;
+    // invalid parameters
+    if (mbox_id < 0 || mbox_id > MAXMBOX || msg_size < 0 || msg_size > mailboxes[mbox_id].maxMessageSize) {
+        return -1;
+    }
+
+    // error
+    if (numSlots >= MAXSLOTS) {
+        return -2;
+    }
+
+    // now instead of blocking we just return the code
+    Mailbox curr = mailboxes[mbox_id];
+
+    if (curr.status == FREE) {
+        return -1;
+    }
+
+    if (curr.numSlots != 0 && curr.usedSlots == curr.numSlots) {
+        return -2;
+    }
+
+    // if we already checked that we are not blocking we can go ahead and send the message
+    return MboxSend(mbox_id, msg_ptr, msg_size);
 }
 
 /**
@@ -247,11 +416,9 @@ void waitDevice(int type, int unit, int *status) {
 }
 
 /**
- * 
+ * Just for compiling ig
  */
-void wakeupByDevice(int type, int unit, int status) {
-
-}
+void wakeupByDevice(int type, int unit, int status) {}
 
 // ----- Interrupr Handlers
 
@@ -294,6 +461,11 @@ void cleanMailbox(int slot) {
     mailboxes[slot].id = -1;
     mailboxes[slot].status = FREE;
     mailboxes[slot].maxMessageSize = 0;
+    mailboxes[slot].nextMsg = 1; // why not zero???
+    mailboxes[slot].sent = 0;
+
+    mailboxes[slot].zMessageSize = 0;
+    mailboxes[slot].zSlot[0] = '\0';
 
     mailboxes[slot].messagesHead = NULL;
     mailboxes[slot].producersHead = NULL;
