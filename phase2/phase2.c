@@ -297,7 +297,6 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size) {
         }
         return 0;
     }
-
     // if the mailbox is full, block until a free slot opens up
     if (mbox->usedSlots == mbox->numSlots) {
         int procIdx = getNextProcess();
@@ -330,8 +329,6 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size) {
 
         }
     }
-
-
     // here we have space left and can just simply send the message
     int slotIdx = getNextSlot();
     Message* newMsg = &mailslots[slotIdx];
@@ -485,14 +482,14 @@ int MboxRecv(int mbox_id, void *msg_ptr, int msg_max_size) {
     }
 
     // if we have free slots, let's just clean up the blocked sender
-    if (mbox->messagesHead != NULL) {
+    if (mbox->producersHead != NULL) {
         int blockIdx = mbox->producersHead->PID;
 
         mbox->producersHead->status = FREE;
-
         Process* next = mbox->producersHead->senderNext;
         mbox->producersHead->senderNext = NULL;
         mbox->producersHead = next;
+
 
         unblockProc(blockIdx);
     }
