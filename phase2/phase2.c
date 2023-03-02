@@ -386,7 +386,6 @@ int MboxRecv(int mbox_id, void *msg_ptr, int msg_max_size) {
         return -1;
     }
     int size = -1;
-
     Mailbox* mbox = &mailboxes[mbox_id];
 
     if (mbox->status == FREE) {
@@ -465,7 +464,6 @@ int MboxRecv(int mbox_id, void *msg_ptr, int msg_max_size) {
         size = shadowTable[procIdx].msgSlot->size;
         
         Message* removed = shadowTable[procIdx].msgSlot;
-        mbox->messagesHead = mbox->messagesHead->next;
 
         removeSlot(mbox, removed);
 
@@ -490,8 +488,6 @@ int MboxRecv(int mbox_id, void *msg_ptr, int msg_max_size) {
         Process* next = mbox->producersHead->senderNext;
         mbox->producersHead->senderNext = NULL;
         mbox->producersHead = next;
-
-
         unblockProc(blockIdx);
     }
 
@@ -647,7 +643,7 @@ void cleanMailbox(int slot) {
     mailboxes[slot].id = -1;
     mailboxes[slot].status = FREE;
     mailboxes[slot].maxMessageSize = 0;
-    mailboxes[slot].nextMsg = 1; // why not zero???
+    mailboxes[slot].nextMsg = 1; 
     mailboxes[slot].sent = 0;
     mailboxes[slot].receiveSize = 0;
 
@@ -871,8 +867,6 @@ void addSlot(Mailbox* mbox, Message* toAdd) {
         mbox->messagesHead = toAdd;
         return;
     } 
-
-    //USLOSS_Console("LETS GOO\n");
 
     Message* curr = mbox->messagesHead;
 
