@@ -1,5 +1,5 @@
 /**
- * AUTHORS:    Kevin Nisterenko
+ * AUTHORS:    Kevin Nisterenko and Rey Sanayei
  * COURSE:     CSC 452, Spring 2023
  * INSTRUCTOR: Russell Lewis
  * ASSIGNMENT: Phase2
@@ -421,19 +421,17 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size) {
 
 /**
  * This function is used by a process to receive a message in a mailbox. It specifies
- * the mailbox, the message itself and also as help, it gives the message size 
+ * the mailbox, the message field of the process and also as help, it gives the message size 
  * for simple checking. If the message can be received (valid params),
- * it does so. Otherwise, if the message cannot be sent due to lack of free slots
- * or receivers (since we do direct delivery), then the process is blocked until 
- * the message can be sent. 
+ * it does so. Otherwise, if the message cannot be recived due to lack of receivers or
+ * no message to be received, it blocks the process until it can complete this operation.
  * 
- * @param mbox_id, int representing the id of the mailbox to send the message to
- * @param msg_ptr, void pointer representing the bytes of actual message
- * @param msg_size, int representing the size of the message we are trying to send
+ * @param mbox_id, int representing the id of the mailbox where it received the
+ * @param msg_ptr, void pointer representing the bytes where the message will be copied to
+ * @param msg_size, int representing the size of the message we are trying to receive/max size
  * 
- * @return int with status code for sucessful completion of a send. -1 if parameters
- * are invalid, -2 if there are no available slots globally, -3 if mailbox was
- * released and 0 if the sent was successful
+ * @return size, int representing the size of the message we received. -1 if no message was 
+ * received and -3 if the mailbox was released during the operation
  */
 int MboxRecv(int mbox_id, void *msg_ptr, int msg_max_size) {
     // invalid parameters
@@ -469,6 +467,7 @@ int MboxRecv(int mbox_id, void *msg_ptr, int msg_max_size) {
             return mbox->zMessageSize;
         } 
 
+        // if we had anyone blocked because they could not send the message
         int oldBlock = mbox->producersHead->PID;
         mbox->producersHead->status = FREE;
 
@@ -525,6 +524,8 @@ int MboxRecv(int mbox_id, void *msg_ptr, int msg_max_size) {
         shadowTable[procIdx].status = FREE;
 
         cleanSlotPointer(removed);  
+    // otherwise we don't need to remove any messages here, and can simply copy it 
+    // over
     } else {
         memcpy(msg_ptr, mbox->messagesHead->msg, msg_max_size);
         size = mbox->messagesHead->size;
@@ -553,7 +554,17 @@ int MboxRecv(int mbox_id, void *msg_ptr, int msg_max_size) {
 }
 
 /**
+ * This function is a non-blocking version of the regular MboxSend. It takes the same 
+ * parameters and returns, and instead of blocking it will simply return/wait to do the
+ * operation later.
  * 
+ * @param mbox_id, int representing the id of the mailbox to send the message to
+ * @param msg_ptr, void pointer representing the bytes of actual message
+ * @param msg_size, int representing the size of the message we are trying to send
+ * 
+ * @return int with status code for sucessful completion of a send. -1 if parameters
+ * are invalid, -2 if there are no available slots globally, -3 if mailbox was
+ * released and 0 if the sent was successful
  */
 int MboxCondSend(int mbox_id, void *msg_ptr, int msg_size) {
     // invalid parameters
@@ -583,7 +594,16 @@ int MboxCondSend(int mbox_id, void *msg_ptr, int msg_size) {
 }
 
 /**
+ * This function is a non-blocking version of the regular MboxRecv. It takes the same 
+ * parameters and returns, and instead of blocking it will simply return/wait to do the
+ * operation later.
  * 
+ * @param mbox_id, int representing the id of the mailbox where it received the
+ * @param msg_ptr, void pointer representing the bytes where the message will be copied to
+ * @param msg_size, int representing the size of the message we are trying to receive/max size
+ * 
+ * @return size, int representing the size of the message we received. -1 if no message was 
+ * received and -3 if the mailbox was released during the operation
  */
 int MboxCondRecv(int mbox_id, void *msg_ptr, int msg_max_size) {
     // invalid parameters
@@ -608,7 +628,12 @@ int MboxCondRecv(int mbox_id, void *msg_ptr, int msg_max_size) {
 }
 
 /**
+ * Given a device, this function will wait (by launching a receive) on a specific device interrupt
+ * to be sent. 
  * 
+ * @param type, int representing type of device
+ * @param unit, int representing which USLOSS unit/mailbox to send this to
+ * @param status, int pointer representing the status of the interrupt (akin to message)
  */
 void waitDevice(int type, int unit, int *status) {
     if (type == USLOSS_CLOCK_DEV) {
@@ -627,50 +652,69 @@ void waitDevice(int type, int unit, int *status) {
 }
 
 /**
- * Just for compiling ig
+ * Just for compiling due to .h file
  */
 void wakeupByDevice(int type, int unit, int status) {}
 
 // ----- Interrupr Handlers
 
 /**
- * 
+ * Left blank as we used our own clockHandler for the intVec below. 
  */
 void phase2_clockHandler(void) {}
 
+/**
+ * Interrupt handler for the clock device. 
+ * 
+ * @param type, int representing USLOSS device type
+ * @param args, void pointer representing the arguments for the
+ * interrupt
+ */
 void clockHandler(int type, void* args) {
     int status = -1;
     int i;
 
+    // call time slice when the clock interrupt is fired
     timeSlice();
     i = USLOSS_DeviceInput(USLOSS_CLOCK_DEV, 0, &status);
     i++;
-    clockCount++;
+    // increase the clock count
+    clockCount++; 
+    // if we have a multiple of 5, send a message
     if (clockCount % 5 == 0) {
         MboxCondSend(0, &status, 4);
     }
 }
 
 /**
+ * Interrupt handler for the terminal device. 
  * 
+ * @param type, int representing USLOSS device type
+ * @param args, void pointer representing the arguments for the
+ * interrupt
  */
 void terminalHandler(int type, void* args) {
     int tmp = -1;
-
+    // simply call the device input for the terminal
     int x = USLOSS_DeviceInput(USLOSS_TERM_DEV, (u_int64_t) args, &tmp);
 	x++;
 	MboxCondSend((u_int64_t) args + 3, &tmp, 4);
 }
 
 /**
+ * Interrupt handler for the syscall device. 
  * 
+ * @param type, int representing USLOSS device type
+ * @param args, void pointer representing the arguments for the
+ * interrupt
  */
 void syscallHandler(int type, void* args) {
     USLOSS_Sysargs* tmp = (USLOSS_Sysargs*) args;
-
+    // call the appropriate handler for the specific syscall
     if (tmp->number >= 0 && tmp->number < MAXSYSCALLS) {
         systemCallVec[tmp->number](args);
     }
+    // if it is an unknown/unsupported syscall, terminate
     else {
         USLOSS_Console("syscallHandler(): Invalid syscall number %d\n", tmp->number);
         USLOSS_Halt(1);
@@ -678,7 +722,9 @@ void syscallHandler(int type, void* args) {
 }
 
 /**
+ * Null syscall handler for unimplemented system calls.
  * 
+ * @param args, USLOSS_Sysargs pointer for the syscall arguments
  */
 void nullsys(USLOSS_Sysargs* args) {
     USLOSS_Console("nullsys(): Program called an unimplemented syscall.  syscall no: %d   PSR: 0x09\n", args->number);
@@ -688,7 +734,9 @@ void nullsys(USLOSS_Sysargs* args) {
 // ----- Helpers
 
 /**
+ * Helper for cleaning/initializing a mailbox to the default/zero values. 
  * 
+ * @param slot, int representing index into the mailboxes array
  */
 void cleanMailbox(int slot) {
     mailboxes[slot].numSlots = 0;
@@ -710,7 +758,9 @@ void cleanMailbox(int slot) {
 }
 
 /**
+ * Helper for cleaning/initializing a message to the default/zero values. 
  * 
+ * @param slot, int representing index into the mailslots array
  */
 void cleanSlot(int slot) {
     mailslots[slot].msg[0] = '\0';
@@ -721,7 +771,9 @@ void cleanSlot(int slot) {
 }
 
 /**
+ * Helper for cleaning/initializing a message to the default/zero values. 
  * 
+ * @param msg, Message pointer representing the message we want to clean up
  */
 void cleanSlotPointer(Message* msg) {
     msg->mboxID = -1;
@@ -731,7 +783,10 @@ void cleanSlotPointer(Message* msg) {
 }
 
 /**
+ * Helper for cleaning/initializing a shadow process entry to the default/zero
+ * values. 
  * 
+ * @param slot, int representing index into the shadowTable
  */
 void cleanShadowEntry(int slot) {
     shadowTable[slot].PID = -1;
@@ -743,13 +798,19 @@ void cleanShadowEntry(int slot) {
 }
 
 /**
+ * Tries to find the next free mailbox slot in the global array and
+ * returns the index so we can access that mailbox. 
  * 
+ * @return int representing the index into the array
  */
 int getNextMbox() {
+    // if we have no free mailboxes, return -1
 	if (numMailboxes >= MAXMBOX) {
 		return -1;
     }
 
+    // in a circular fashion, try to find the next free mailbox
+    // in the mailboxes array
 	int count = 0;
 	while(mailboxes[mailboxIncrementer % MAXMBOX].status != FREE) {
 		if (count < MAXMBOX) {
@@ -764,10 +825,15 @@ int getNextMbox() {
 }
 
 /**
+ * Tries to find the next free process slot in the global array and
+ * returns the index so we can access that process in the shadow table. 
  * 
+ * @return int representing the index into the array
  */
 int getNextProcess() {
 	int count = 0;
+    // in a circular fashion, try to find the next free process
+    // in the shadowTable
 	while (shadowTable[pidIncrementer % MAXPROC].status != FREE) {
 		if (count < MAXPROC) {
             count++;
@@ -781,9 +847,14 @@ int getNextProcess() {
 }
 
 /**
+ * Tries to find the next free mail/message slot in the global array and
+ * returns the index so we can access that message.
  * 
+ * @return int representing the index into the array
  */
 int getNextSlot() {
+    // in a circular fashion, try to find the next free mailslot
+    // in the mailslots array
 	for (int i = 0; i < MAXSLOTS; i++) {
 		if (mailslots[slotIncrementer % MAXSLOTS].status == FREE) {
             return slotIncrementer;
@@ -794,11 +865,16 @@ int getNextSlot() {
 }
 
 /**
+ * Unblocks all receiver processes from a given mailbox, used
+ * when we release/free a mailbox. 
  * 
+ * @param mbox, Mailbox pointer representing the mailbox where 
+ * we want to unblock the receivers
  */
 void unblockReceivers(Mailbox* mbox) {
     Process* curr = mbox->consumersHead;
 
+    // while we have something in the queue, unblock it
     while (curr != NULL) {
         curr->status = FREE;
         unblockProc(curr->PID);
@@ -807,11 +883,16 @@ void unblockReceivers(Mailbox* mbox) {
 }
 
 /**
+ * Unblocks all sender processes from a given mailbox, used
+ * when we release/free a mailbox. 
  * 
+ * @param mbox, Mailbox pointer representing the mailbox where 
+ * we want to unblock the senders
  */
 void unblockSenders(Mailbox* mbox) {
     Process* curr = mbox->producersHead;
 
+    // while we have something in the queue, unblock it
     while (curr != NULL) {
         curr->status = FREE;
         unblockProc(curr->PID);
@@ -820,27 +901,25 @@ void unblockSenders(Mailbox* mbox) {
 }
 
 /**
+ * Adds the given process to the receiver queue (linked list)
+ * of processes in the given mailbox.
  * 
+ * @param mbox, Mailbox pointer representing the mailbox where 
+ * we want to add the receiver
+ * @param proc, Process pointer representing the process
+ * we want to add to the list 
  */
-// void addToReceiverQueue(Mailbox* mbox, Process* proc) {
-//     Process* h = mbox->consumersHead;
-
-//     if (h == NULL) {
-//         mbox->consumersHead = proc;
-//     } else {
-//         proc->receiverNext = mbox->consumersHead;
-//         mbox->consumersHead = proc;
-//     }
-// }
-
 void addToReceiverQueue(Mailbox* mbox, Process* proc) {
-     Process* h = mbox->consumersHead;
-
+    Process* h = mbox->consumersHead;
+    
+    // if the list is empty, the added process is the head
     if (h == NULL) {
         mbox->consumersHead = proc;
         return;
     }
-
+    
+    // otherwise, find the next free spot (end of list)
+    // and add it there
     Process* curr = mbox->consumersHead;
 
     while (curr->receiverNext != NULL) {
@@ -850,27 +929,25 @@ void addToReceiverQueue(Mailbox* mbox, Process* proc) {
 }
 
 /**
+ * Adds the given process to the sender queue (linked list)
+ * of processes in the given mailbox.
  * 
+ * @param mbox, Mailbox pointer representing the mailbox where 
+ * we want to add the sender
+ * @param proc, Process pointer representing the process
+ * we want to add to the list 
  */
-// void addToSenderQueue(Mailbox* mbox, Process* proc) {
-//     Process* h = mbox->producersHead;
-
-//     if (h == NULL) {
-//         mbox->producersHead = proc;
-//     } else {
-//         proc->senderNext = mbox->producersHead;
-//         mbox->producersHead = proc;
-//     }
-// }
-
 void addToSenderQueue(Mailbox* mbox, Process* proc) {
     Process* h = mbox->producersHead;
 
+    // if the list is empty, the added process is the head
     if (h == NULL) {
         mbox->producersHead = proc;
         return;
     }
 
+    // otherwise, find the next free spot (end of list)
+    // and add it there
     Process* curr = mbox->producersHead;
 
     while (curr->senderNext != NULL) {
@@ -880,27 +957,25 @@ void addToSenderQueue(Mailbox* mbox, Process* proc) {
 }
 
 /**
+ * Adds the given process to the ordered queue (linked list)
+ * of processes in the given mailbox.
  * 
+ * @param mbox, Mailbox pointer representing the mailbox where 
+ * we want to add the process
+ * @param proc, Process pointer representing the process
+ * we want to add to the list 
  */
-// void addToOrderedQueue(Mailbox* mbox, Process* proc) {
-//     Process* h = mbox->orderedHead;
-
-//     if (h == NULL) {
-//         mbox->orderedHead = proc;
-//     } else {
-//         proc->orderedNext = mbox->orderedHead;
-//         mbox->orderedHead = proc;
-//     }
-// }
-
 void addToOrderedQueue(Mailbox* mbox, Process* proc) {
-     Process* h = mbox->orderedHead;
+    Process* h = mbox->orderedHead;
 
+    // if the list is empty, the added process is the head
     if (h == NULL) {
         mbox->orderedHead = proc;
         return;
     }
 
+    // otherwise, find the next free spot (end of list)
+    // and add it there
     Process* curr = mbox->orderedHead;
 
     while (curr->orderedNext != NULL) {
@@ -910,17 +985,25 @@ void addToOrderedQueue(Mailbox* mbox, Process* proc) {
 }
 
 /**
+ * Adds the given message to the messages queue in the given
+ * mailbox.
  * 
+ * @param mbox, Mailbox pointer representing the mailbox where 
+ * we want to add the message
+ * @param toAdd, Message pointer representing the message
+ * we want to add to the list 
  */
 void addSlot(Mailbox* mbox, Message* toAdd) {
     Message* h = mbox->messagesHead;
 
-
+    // if the list is empty, the added message is the head
     if (h == NULL) {
         mbox->messagesHead = toAdd;
         return;
     } 
 
+    // otherwise, find the next free spot (end of list)
+    // and add the message there
     Message* curr = mbox->messagesHead;
 
     while (curr->next != NULL) {
@@ -931,17 +1014,28 @@ void addSlot(Mailbox* mbox, Message* toAdd) {
 }
 
 /**
+ * Removes the given message from the messages queue in the given
+ * mailbox.
  * 
+ * @param mbox, Mailbox pointer representing the mailbox where 
+ * we want to remove the message
+ * @param toAdd, Message pointer representing the message
+ * we want to remove from the list
  */
 void removeSlot(Mailbox* mbox, Message* toRemove) {
+    // if there are no messages, do nothing
     if (mbox->messagesHead == NULL) {
         return;
     }
+
+    // if the message we want to remove is the head, do so
     if (mbox->messagesHead == toRemove) {
         mbox->messagesHead = mbox->messagesHead->next;
         return;
     }
 
+    // otherwise find the message and remove it from the
+    // list
     Message* curr = mbox->messagesHead; 
 
     while(curr->next != toRemove) {
