@@ -569,8 +569,6 @@ void waitDevice(int type, int unit, int *status) {
 		USLOSS_Console("Invalid device. Halt\n");
 		USLOSS_Halt(1);
 	}
-
-	return 0;
 }
 
 /**
