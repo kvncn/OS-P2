@@ -1,5 +1,5 @@
 /**
- * AUTHORS:    Kevin Nisterenko and Rey Sanayei
+ * AUTHORS:    Kevin Nisterenko
  * COURSE:     CSC 452, Spring 2023
  * INSTRUCTOR: Russell Lewis
  * ASSIGNMENT: Phase2
@@ -7,7 +7,7 @@
  * 
  * This project implements a mailbox system for IPC. It handles both the sending
  * and receiving of messages with or without payload as a way to mimic process 
- * communication in an operating system. 
+ * communication in an operating system. Direct delivery strategy. 
  */
 
 // ----- Constants 
@@ -31,50 +31,54 @@ typedef struct Process Process;
 // ----- Structs
 
 /**
- * 
+ * Mailbox struct for the mailbox, contains all the necessary information
+ * to maintain a mailbox. 
  */
 struct Mailbox {
-    int numSlots; 
-    int usedSlots; 
-    int id; 
-    int status; 
-    int maxMessageSize;
-    int nextMsg;
-    int sent;
-    int receiveSize;
+    int numSlots;       // number of slots this mailbox contains
+    int usedSlots;      // number of slots that have been used/have a message
+    int id;             // id of the mailbox
+    int status;         // status of the mailbox (released, in use)
+    int maxMessageSize; // max message size this mailbox can hold
+    int nextMsg;        // to check if there is or not a next message
+    int sent;           // how many messages have been sent
+    int receiveSize;    // the size of the message received (for sanity check)
 
     // for zero slot mailboxes
-    int zMessageSize; 
+    int zMessageSize;         // message size in a zero slot mailbox
     char* zSlot[MAX_MESSAGE]; // message in a zero slot mailbox
 
-    Message* messagesHead; 
-    Process* producersHead;
-    Process* consumersHead;
-    Process* orderedHead;
+    // Queues
+    Message* messagesHead;  // message queue 
+    Process* producersHead; // senders
+    Process* consumersHead; // receivers
+    Process* orderedHead;   // order queue
 
 };
 
 /**
- * 
+ * Messag struct for a specific message/slot in a mailbox that processes 
+ * send and receive. 
  */
 struct Message {
-    int mboxID;
-    int size;
-    int status;
+    int mboxID;             // so we know which mailbox it is attached to 
+    int size;               // size so we caan easily check for validity
+    int status;             // status of the message
     char msg[MAX_MESSAGE];  // actual message
     Message* next;          // for the queue
 };
 
 /**
- * 
+ * Struct for the shadow table of processes, where we hold necessary info 
+ * to block/unblock and send/receive for a process. 
  */
 struct Process {
-    int PID;       // pid for blocks/unblocks
-    int status;
-    Process* senderNext; // for the queue
-    Process* receiverNext;
-    Process* orderedNext; 
-    Message* msgSlot
+    int PID;               // pid for blocks/unblocks
+    int status;            // status of the process (blocked, free)
+    Process* senderNext;   // for the sender queue (if this process is a sender)
+    Process* receiverNext; // for the receiver queue (if this process is a receiver)
+    Process* orderedNext;  // for the ordered queue (to keep order for receiving and sending)
+    Message* msgSlot       // which message it holds
 };
 
 // ----- Function Prototypes
@@ -117,29 +121,32 @@ void addSlot(Mailbox*, Message*);
 void removeSlot(Mailbox*, Message*);
 
 // ----- Global data structures/vars
-Mailbox mailboxes[MAXMBOX];
-Message mailslots[MAXSLOTS];
-Process shadowTable[MAXPROC];
+Mailbox mailboxes[MAXMBOX];   // all mailboxes in the system
+Message mailslots[MAXSLOTS];  // global pool of messages
+Process shadowTable[MAXPROC]; // shadow process table
 
-int pidIncrementer;
-int slotIncrementer;
-int mailboxIncrementer;
-int numSlots;
-int numMailboxes;
-int clockCount;
+int pidIncrementer;           // so we always have the right index into the shadow table
+int slotIncrementer;          // so we always have the right index into the messages array
+int mailboxIncrementer;       // so we always have the right index into the mailbox array
+int numSlots;                 // so we know how many slots are globally being used
+int numMailboxes;             // so we know how many mailboxes are being used
+int clockCount;               // so we can fire the clock handler 
 
-void (*systemCallVec[MAXSYSCALLS])(USLOSS_Sysargs *args); // syscalls
+void (*systemCallVec[MAXSYSCALLS])(USLOSS_Sysargs *args); // syscall vector
 
 // ----- Phase 2 Bootload
 
 /**
- * testing my branch
+ * Initialized all the needed variables and data structures for the bootload
+ * process so this phase can start running and all the functions safely called. 
  */
 void phase2_init(void) {
+    // set the handlers for USLOSS
     USLOSS_IntVec[USLOSS_TERM_INT] = terminalHandler;
     USLOSS_IntVec[USLOSS_SYSCALL_INT] = syscallHandler;
     USLOSS_IntVec[USLOSS_CLOCK_INT] = clockHandler;
 
+    // initialize the global arrays by wiping them clean
     for (int i = 0; i < MAXMBOX; i++) {
         cleanMailbox(i);
     }
@@ -156,13 +163,14 @@ void phase2_init(void) {
         systemCallVec[i] = nullsys;
     }
 
-    // need to intialize first 7 mailboxes
+    // need to intialize first 7 mailboxes for input output
     for (int i = 0; i < 7; i++) {
         mailboxes[i].id = i;
         mailboxes[i].status = IN_USE;
         mailboxes[i].maxMessageSize = sizeof(int);
     }
 
+    // set the global variables
     pidIncrementer = 0;
     slotIncrementer = 0;
     numSlots = 0;
@@ -175,11 +183,15 @@ void phase2_init(void) {
 void phase2_start_service_processes(void) {}
 
 /**
+ * This function checks the reserved i/o mailboxes to see if there are any
+ * processes waiting on it.
  * 
+ * @return int representing yes or no for processes on i/o
  */
 int phase2_check_io(void) {
-    // first 7 mailboxes are for io
-    for (int i =0; i < 7; i++) {
+    // first 7 mailboxes are for i/o, check if they have anything waiting on 
+    // them, if so, return 1 (for yes)
+    for (int i = 0; i < 7; i++) {
         if (mailboxes[i].consumersHead != NULL) {
             return 1;
         }
@@ -190,7 +202,14 @@ int phase2_check_io(void) {
 // ----- Messaging System
 
 /**
+ * This function creates a new mailbox, esentially it allocates one of the free 
+ * mailboxes with the given parameters for number of slots and slot/message size. 
  * 
+ * @param slots, int representing the number of messages this mailbox can hold
+ * @param slot_size, int representing the max message size of this mailbox
+ * 
+ * @return mbslot, int representing the id of the mailbox, -1 if the creation
+ * was unsucessful
  */
 int MboxCreate(int slots, int slot_size) {
     // if the params are invalid
@@ -200,7 +219,7 @@ int MboxCreate(int slots, int slot_size) {
 
     int mbslot = getNextMbox();
 
-    // no empty mailboxes
+    // no empty mailboxes, cannot create any
     if (mbslot == -1) {
         return -1;
     }
@@ -214,7 +233,13 @@ int MboxCreate(int slots, int slot_size) {
 }
 
 /**
+ * This function is used to free a currently in use mailbox and wipe it clean. 
+ * It also unblocks all processes that depend on it since it will not exist 
+ * anymore. 
  * 
+ * @param mbox_id, id of the mailbox we want to release
+ * 
+ * @return int, 0 if successful, -1 otherwise
  */
 int MboxRelease(int mbox_id) {
     // check for invalid param
@@ -235,7 +260,20 @@ int MboxRelease(int mbox_id) {
 }
 
 /**
+ * This function is used by a process to send a message in a mailbox. It specifies
+ * the mailbox, the message itself and also as help, it gives the message size 
+ * for simple checking. If the message can be sent (valid params and free slots),
+ * it does so. Otherwise, if the message cannot be sent due to lack of free slots
+ * or receivers (since we do direct delivery), then the process is blocked until 
+ * the message can be sent. 
  * 
+ * @param mbox_id, int representing the id of the mailbox to send the message to
+ * @param msg_ptr, void pointer representing the bytes of actual message
+ * @param msg_size, int representing the size of the message we are trying to send
+ * 
+ * @return int with status code for sucessful completion of a send. -1 if parameters
+ * are invalid, -2 if there are no available slots globally, -3 if mailbox was
+ * released and 0 if the sent was successful
  */
 int MboxSend(int mbox_id, void *msg_ptr, int msg_size) {
     // checking for invalid params
@@ -314,11 +352,14 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size) {
             return -3;
         }
 
+        // while we still have more messages than sent
         while (msgIdx > mbox->sent + 1) {
+            // get the next process we have and block it
             procIdx = getNextProcess();
             shadowTable[procIdx].PID = getpid();
 			shadowTable[procIdx].status	= BLOCKED;
 
+            // add it to the order queue so we can maintain the order
 			addToOrderedQueue(mbox, &shadowTable[procIdx]); 
             
             blockMe(10+shadowTable[procIdx].PID); 
@@ -330,7 +371,7 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size) {
 
         }
     }
-    // here we have space left and can just simply send the message
+    // here we have space left on the mailbox and can just simply send the message
     int slotIdx = getNextSlot();
     Message* newMsg = &mailslots[slotIdx];
 
@@ -361,24 +402,38 @@ int MboxSend(int mbox_id, void *msg_ptr, int msg_size) {
         unblockProc(removed);
     }
 
+    // free up anyone waiting on the message in the order queue
     while (mbox->orderedHead != NULL) {
-        int removed = mbox->orderedHead->PID;
+        int rm = mbox->orderedHead->PID;
 
         Process* newHead = mbox->orderedHead->orderedNext; 
         mbox->orderedHead->orderedNext = NULL;
         mbox->orderedHead = newHead; 
 
-        unblockProc(removed);
+        unblockProc(rm);
     }
 
     mbox->usedSlots++;
     numSlots++;
-
+    
     return 0;
 }
 
 /**
+ * This function is used by a process to receive a message in a mailbox. It specifies
+ * the mailbox, the message itself and also as help, it gives the message size 
+ * for simple checking. If the message can be received (valid params),
+ * it does so. Otherwise, if the message cannot be sent due to lack of free slots
+ * or receivers (since we do direct delivery), then the process is blocked until 
+ * the message can be sent. 
  * 
+ * @param mbox_id, int representing the id of the mailbox to send the message to
+ * @param msg_ptr, void pointer representing the bytes of actual message
+ * @param msg_size, int representing the size of the message we are trying to send
+ * 
+ * @return int with status code for sucessful completion of a send. -1 if parameters
+ * are invalid, -2 if there are no available slots globally, -3 if mailbox was
+ * released and 0 if the sent was successful
  */
 int MboxRecv(int mbox_id, void *msg_ptr, int msg_max_size) {
     // invalid parameters
